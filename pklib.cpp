@@ -1,116 +1,85 @@
-#include <stdio.h>   /* Standard input/output definitions */
-#include <string.h>  /* String function definitions */
-#include <unistd.h>  /* UNIX standard function definitions */
-#include <fcntl.h>   /* File control definitions */
-#include <errno.h>   /* Error number definitions */
-#include <termios.h> /* POSIX terminal control definitions */
-#include <stdlib.h>
-#include "pklib.h"
+#include <pklib.h>
+#include <pklib-internal.h>
 
-static char rcs_id[] = "$Id: pklib.c,v 1.4 2013/02/18 12:15:14 ahmet Exp $";
+#include <unistd.h>
+#include <types.h>
+#include <fcntl.h>
+#include <termios.h>
 
-/*
- * 'open_port()' - Open serial port 1.
- *
- * Returns the file descriptor on success or -1 on error.
- */
-
-int open_port(char *dev) {
-	int fd; /* File descriptor for the port */
-
-	fd = open(dev, O_RDWR | O_NOCTTY | O_NDELAY);
-	if (fd == -1) {
-		perror("open_port: Unable to open device");
-		exit(-1);
-	} else
-		fcntl(fd, F_SETFL, 0);
-
-	return (fd);
+PacketRadio::PacketRadio::PacketRadio(const char * filename, uint8_t address) {
+	this->openPort(filename);
+	this->setAddress(address);
 }
 
-/*
- * Given payload is a string.
- * Return the length of packet.
- */
-int create_packet(int dest, int src, char control, const char *payload,
-		PacketPtr ptr) {
-
-	ptr->dest = dest;
-	ptr->src = src;
-	ptr->control = control;
-	ptr->rxNode = 0xff;
-	ptr->txNode = 0xff;
-	ptr->length = strlen(payload);
-	strncpy(ptr->payload, payload, PAYLOAD_SIZE);
-	return ptr->length;
-
-}
-
-int transmit(PacketPtr packet, int fd) {
-	static int counter = 0;
-	char *bytes, *current;
-	current = calloc(OVERHEAD_SIZE + MAX_SEGMENT_SIZE, sizeof(char));
-	bytes = current;
-	if (bytes) {
-		*(current++) = TRANSMIT;
-		*(current++) = packet->dest;
-		*(current++) = packet->length + HEADER_SIZE;
-		pk2chars(packet, current);
-		int n = write(fd, bytes, OVERHEAD_SIZE + MAX_SEGMENT_SIZE);
-		if (n < 0) {
-			printf("Error when writing to the board.");
-			exit(n);
-		}
-		free(bytes);
-		current = bytes = NULL;
-	}
-	return ++counter;
-}
-
-int chars2pk(PacketPtr pk, char *buffer) {
-	buffer++;
-	pk->dest = *(buffer++);
-	pk->src = *(buffer++);
-	pk->control = *(buffer++);
-	pk->length = *(buffer++);
-	pk->txNode = *(buffer++);
-	pk->rxNode = *(buffer++);
-	strncpy(pk->payload, buffer, pk->length + 1);
-	return 1;
-}
-
-int is_ack(PacketPtr pk) {
-	return (pk->control && 0x90);
-}
-
-void setAddress(int fd, int addr) {
-	/*
-	 * Init board address.
-	 */
+/// Initialise board address
+void PacketRadio::PacketRadio::setAddress(uint8_t address) {
 	char cmd[2] = { SET_ADDRESS, addr };
 	write(fd, cmd, 2);
-
-}
-void Initialisation(int fd) {
-	/*
-	 * Enable Aloha mode
-	 */
-	char cmd2[2] = { MODE,ALOHA_ENABLE };
-	write(fd, cmd2, 2);
-
-	char cmd3[2] = { SET_MAX_TRANS,0x6 };
-	write(fd, cmd3, 2);
-
-	char cmd4[2] = { SET_SLOT_TIME,0x6 };
-	write(fd, cmd4, 2);
 }
 
-void pk2chars(PacketPtr packet, char *buf) {
-	sprintf(buf, "%c%c%c%c%c%c", packet->dest, packet->src, packet->control,
-			packet->length, packet->txNode, packet->rxNode);
-	buf += HEADER_SIZE;
-	int i;
-	for (i = 0; i < PAYLOAD_SIZE; i++) {
-		*(buf + i) = *(packet->payload + i);
+/// Open device filesystem object
+void PacketRadio::PacketRadio::openPort(const char * filename) {
+	this->fd = open(dev, O_RDWR | O_NOCTTY | O_NDELAY); //open in read-write, non-blocking mode
+
+	if (this->fd < 0) {
+		perror("open_port: Unable to open device");
+		exit(-1);
+	} else {
+		fcntl(this->fd, F_SETFL, 0);
+	}
+
+	//setup RS232 terminal
+	struct termios newtio;
+	memset(&newtio, 0, sizeof(newtio));
+	newtio.c_cflag = BAUDRATE | CRTSCTS | CS8 | CLOCAL | CREAD;
+	newtio.c_iflag = IGNPAR;
+	newtio.c_oflag = 0;
+
+	// set input mode (non-canonical, no echo,...)
+	newtio.c_lflag = 0;
+
+	// inter-character timer unused
+	newtio.c_cc[VTIME] = 0; 
+
+	// blocking read until header received
+	newtio.c_cc[VMIN] = MAX_SEGMENT_SIZE; //modified to allow buffering a whole packet JW 22/3/13 //HEADER_SIZE;
+
+	tcflush(fd, TCIFLUSH);
+	tcsetattr(fd, TCSANOW, &newtio);
+}
+
+/// Return internal file descriptor
+int PacketRadio::PacketRadio::getFD() {
+	return this->fd;
+}
+
+/// Return a future object for the next packet to be received
+std::future<PacketRadio::Packet> PacketRadio::PacketRadio::recvPacket() {
+	return std::async(std::launch::async, [](){
+		uint8_t buffer[MAX_SEGMENT_SIZE];
+
+		read(this->fd, buffer, HEADER_SIZE); //test me, depends on the VMIN setting in openPort
+
+		if (buf[1] == 0x7e) { //statistics packet
+			read(this->fd, buffer + HEADER_SIZE, 9);
+		} else if (buf[LENGTH_BYTE_OFFSET] > 0) { //test to see whether the packet has non-zero length
+			int len = buf[LENGTH_BYTE_OFFSET];
+			read(this->fd, buffer + HEADER_SIZE, len); //depends on the VMIN setting
+		}
+
+		return PacketRadio::Packet(buffer);
+	});
+}
+
+PacketRadio::Packet::Packet(const uint8_t * buffer) {
+	this->dst_addr = buffer[1];
+	this->src_addr = buffer[2];
+	this->control  = buffer[3];
+	this->length   = buffer[4];
+	this->txNode   = buffer[5];
+	this->rxNode   = buffer[6];
+
+	for (int i = 7; i < this->length + 7; i++) { //check terminator, may be off
+		this->payload.push_back(buffer[i]);
 	}
 }

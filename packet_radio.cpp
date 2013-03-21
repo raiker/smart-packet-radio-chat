@@ -2,6 +2,9 @@
 //Joshua Weberruss, Monash University
 
 #include <thread>
+#include <condition_variable>
+#include <queue>
+#include <vector>
 #include <string>
 #include <sstream>
 
@@ -11,7 +14,6 @@
 #include "pklib.h"
 
 static void set_termino(int fd);
-
 
 int main(int argc, char **argv) {
 	int dest, dev_num;
@@ -55,8 +57,22 @@ int main(int argc, char **argv) {
     //set the device address
     setAddress(fd, dev_num);
     Initialisation(fd); //this needs to be OOified
+
+    //packet receipt queue
+    std::queue<std::vector<unsigned char>> packet_queue();
     
-    
+    //mutex
+    std::mutex queue_mutex();
+
+    //receiver signal variable
+    std::condition_variable queue_var();
+
+    //create receiver thread
+    std::thread receiver_thread([&]() {
+    	
+    	std::lock_guard<std::mutex> lock(queue_mutex); //RAII
+    	packet_queue.push()
+    });
 }
 
 void set_termino(int fd) {
