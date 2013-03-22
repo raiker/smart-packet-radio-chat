@@ -16,7 +16,7 @@ namespace PacketRadio {
 		uint8_t rxNode;
 		std::vector<uint8_t> payload;
 
-		Packet();
+		Packet(uint8_t _dst, uint8_t _src, uint8_t _control, std::vector<uint8_t> _payload);
 		Packet(const uint8_t * buffer);
 	};
 

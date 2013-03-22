@@ -6,7 +6,7 @@
 #include <fcntl.h>
 #include <termios.h>
 
-PacketRadio::PacketRadio::PacketRadio(const char * filename, uint8_t address) {
+PacketRadio::PacketRadio(const char * filename, uint8_t address) {
 	this->openPort(filename);
 	this->setAddress(address);
 }
@@ -71,7 +71,26 @@ std::future<PacketRadio::Packet> PacketRadio::PacketRadio::recvPacket() {
 	});
 }
 
-PacketRadio::Packet::Packet(const uint8_t * buffer) {
+/// Send a packet
+void PacketRadio::PacketRadio::sendPacket(const Packet& p){
+	//optimise me!
+	
+}
+
+/// Create a packet from parameters. The payload vector is std::moved
+PacketRadio::Packet(uint8_t _dst, uint8_t _src, uint8_t _control, const std::vector<uint8_t> _payload){
+	this->dst_addr = _dst;
+	this->src_addr = _src;
+	this->control  = _control;
+	this->length   = 6 + _payload.length();
+	this->txNode   = 0xff;
+	this->rxNode   = 0xff;
+	
+	this->payload  = std::move(_payload);
+}
+
+/// Create a packet object from a byte array
+PacketRadio::Packet(const uint8_t * buffer) {
 	this->dst_addr = buffer[1];
 	this->src_addr = buffer[2];
 	this->control  = buffer[3];
